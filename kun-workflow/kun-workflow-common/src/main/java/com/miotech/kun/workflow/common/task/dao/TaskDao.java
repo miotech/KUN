@@ -55,7 +55,7 @@ public class TaskDao {
 
     public static final String TASK_TAGS_MODEL_NAME = "task_tags";
 
-    private static final List<String> taskCols = ImmutableList.of("id", "name", "description", "operator_id", "config", "schedule","queue_name","priority");
+    private static final List<String> taskCols = ImmutableList.of("id", "name", "description", "operator_id", "config", "schedule", "queue_name", "priority");
 
     private static final List<String> taskTagCols = ImmutableList.of("task_id", "tag_key", "tag_value");
 
@@ -318,6 +318,8 @@ public class TaskDao {
             }
         } while (!queue.isEmpty());
         if (sortTasks.size() != size) {
+            List<Long> cycleDependTasks = plainTasks.stream().map(Task::getId).collect(Collectors.toList());
+            logger.error("tasks:{},has cycle dependencies", cycleDependTasks);
             throw ExceptionUtils.wrapIfChecked(new Exception("has cycle in task dependencies"));
         }
         return sortTasks;
@@ -907,6 +909,30 @@ public class TaskDao {
 
         Set<Long> downstreamTaskIds = retrieveTaskIdsWithinDependencyDistance(srcTask, distance, DependencyDirection.DOWNSTREAM, includeSelf);
         return fetchTasksByIds(downstreamTaskIds);
+    }
+
+
+    /**
+     *
+     * @param taskId
+     * @param taskIds upstream taskIds
+     * @return
+     */
+    public List<Long> getCycleDependencies(Long taskId, List<Long> taskIds) {
+        String filterTaskId = taskIds.stream().map(x -> "?").collect(Collectors.joining(","));
+
+        String sql = "WITH RECURSIVE checkcycle(task_id,path,cycle) as \n" +
+                "(SELECT upstream_task_id,ARRAY[downstream_task_id,upstream_task_id],FALSE from kun_wf_task_relations \n" +
+                "WHERE downstream_task_id in " + filterTaskId + " \n" +
+                "UNION \n" +
+                "SELECT kw.upstream_task_id,path || kw.upstream_task_id,kw.upstream_task_id != ? FROM checkcycle as c \n" +
+                "INNER JOIN kun_wf_task_relations as kw \n" +
+                "ON c.task_id = kw.downstream_task_id\n" +
+                "WHERE NOT c.cycle\n" +
+                ") SELECT task_id,path,cycle FROM checkcycle WHERE cycle = TRUE;";
+        taskIds.add(taskId);
+        List<Object> result = dbOperator.fetchAll(sql, rs -> rs.getArray(1), taskIds);
+        return result.stream().map(x -> Long.valueOf(x.toString())).collect(Collectors.toList());
     }
 
     public static class TaskMapper implements ResultSetMapper<Task> {

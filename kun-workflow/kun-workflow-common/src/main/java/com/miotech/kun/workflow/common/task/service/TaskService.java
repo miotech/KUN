@@ -111,6 +111,18 @@ public class TaskService {
         return task;
     }
 
+    /**
+     * @param task
+     */
+    private void checkCycleDependencies(Task task) {
+        List<Long> cycleDependencies = taskDao.getCycleDependencies(task.getId(), task.getDependencies().
+                stream().map(TaskDependency::getDownstreamTaskId).collect(Collectors.toList()));
+        if (cycleDependencies.size() != 0) {
+            throw new IllegalArgumentException("create task:" + task.getId() + ",has cycle dependencies:" + cycleDependencies);
+        }
+    }
+
+
     private Config parseConfig(TaskPropsVO vo) {
         ConfigDef configDef = operatorService.getOperatorConfigDef(vo.getOperatorId());
         // populate default values
@@ -184,6 +196,9 @@ public class TaskService {
                 .withTags(vo.getTags())
                 .withPriority(vo.getPriority() == null ? TaskPriority.MEDIUM.getPriority() : TaskPriority.valueOf(vo.getPriority()).getPriority())
                 .build();
+        // check dependency
+        checkCycleDependencies(task);
+
         return fullUpdateTask(task);
     }
 
@@ -196,16 +211,19 @@ public class TaskService {
             throw new EntityNotFoundException(String.format("Cannot create task with operator id: %d, target operator not found.", task.getOperatorId()));
         }
 
-        // 3. Update target task. If there is no task affected (task not exists), throw exception
+        // 3. check dependency
+        checkCycleDependencies(task);
+
+        // 4. Update target task. If there is no task affected (task not exists), throw exception
         boolean taskUpdated = taskDao.update(task);
         if (!taskUpdated) {
             throw new EntityNotFoundException(String.format("Cannot perform update on non-exist task with id: %d", task.getId()));
         }
 
-        // 4. Fetch updated task
+        // 5. Fetch updated task
         Task updatedTask = taskDao.fetchById(task.getId()).orElseThrow(IllegalStateException::new);
 
-        // 5. Update lineage graph
+        // 6. Update lineage graph
         updateLineageGraphOnTaskUpdate(updatedTask);
 
         return updatedTask;

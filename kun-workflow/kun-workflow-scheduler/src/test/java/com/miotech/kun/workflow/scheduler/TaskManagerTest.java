@@ -293,7 +293,7 @@ public class TaskManagerTest extends SchedulerTestBase {
         List<TaskRun> taskRunList = MockTaskRunFactory.createTaskRunsWithRelations(taskList, "0>>1;1>>2");
         TaskRun taskRun1 = taskRunList.get(0);
         TaskRun taskRun2 = taskRunList.get(1);
-        TaskRun taskRun3 = taskRunList.get(1);
+        TaskRun taskRun3 = taskRunList.get(2);
         taskRunDao.createTaskRun(taskRun1);
         taskRunDao.createTaskRun(taskRun2);
         taskRunDao.createTaskRun(taskRun3);
