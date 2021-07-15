@@ -51,6 +51,7 @@ import static org.mockito.Mockito.*;
 
 public class TaskSpawnerTest extends SchedulerTestBase {
     private static final String CRON_EVERY_MINUTE = "0 * * ? * * *";
+    private static final String CRON_EVERY_DAY = "0 0 1 ? * * *";
     private static final String CRON_EVERY_THREE_MINUTE = "0 */3 * ? * * *";
 
     private static <T> CustomisableMatcher<T> safeSameBeanAs(T expected) {
@@ -160,22 +161,33 @@ public class TaskSpawnerTest extends SchedulerTestBase {
         await().atMost(10, TimeUnit.SECONDS).until(this::invoked);
         verify(taskManager).submit(captor.capture());
         List<TaskRun> result = captor.getValue();
-        assertThat(result.size(), is(1));
+        assertThat(result.size(), is(2));
 
-        TaskRun submitted = result.get(0);
-        assertThat(submitted.getId(), is(notNullValue()));
-        assertThat(submitted.getTask(), safeSameBeanAs(taskList.get(0)));
-        assertThat(submitted.getScheduledTick(), is(SpecialTick.NULL.toTick()));
-        assertThat(submitted.getStartAt(), is(nullValue()));
-        assertThat(submitted.getEndAt(), is(nullValue()));
-        assertThat(submitted.getStatus(), is(TaskRunStatus.CREATED));
+        TaskRun submitted1 = result.get(0);
+        assertThat(submitted1.getId(), is(notNullValue()));
+        assertThat(submitted1.getTask(), safeSameBeanAs(taskList.get(0)));
+        assertThat(submitted1.getScheduledTick(), is(SpecialTick.NULL.toTick()));
+        assertThat(submitted1.getStartAt(), is(nullValue()));
+        assertThat(submitted1.getEndAt(), is(nullValue()));
+        assertThat(submitted1.getStatus(), is(TaskRunStatus.CREATED));
 
-        assertThat(submitted.getConfig().size(), is(2));
-        assertThat(submitted.getConfig().getString("var1"), is("default1"));
-        assertThat(submitted.getConfig().getString("var2"), is("default2"));
+        assertThat(submitted1.getConfig().size(), is(2));
+        assertThat(submitted1.getConfig().getString("var1"), is("default1"));
+        assertThat(submitted1.getConfig().getString("var2"), is("default2"));
 
-        TaskRun saved = taskRunDao.fetchTaskRunById(submitted.getId()).get();
-        assertThat(submitted, safeSameBeanAs(saved));
+        TaskRun saved1 = taskRunDao.fetchTaskRunById(submitted1.getId()).get();
+        assertThat(submitted1, safeSameBeanAs(saved1));
+
+        TaskRun submitted2 = result.get(1);
+        assertThat(submitted2.getId(), is(notNullValue()));
+        assertThat(submitted2.getScheduledTick(), is(SpecialTick.NULL.toTick()));
+        assertThat(submitted2.getStartAt(), is(nullValue()));
+        assertThat(submitted2.getEndAt(), is(nullValue()));
+        assertThat(submitted2.getStatus(), is(TaskRunStatus.UPSTREAM_NOT_FOUND));
+
+        assertThat(submitted2.getConfig().size(), is(2));
+        assertThat(submitted2.getConfig().getString("var1"), is("default1"));
+        assertThat(submitted2.getConfig().getString("var2"), is("default2"));
     }
 
     @Test
@@ -925,6 +937,81 @@ public class TaskSpawnerTest extends SchedulerTestBase {
         assertThat(submitted.getDependentTaskRunIds(), hasSize(1));
         assertThat(submitted.getDependentTaskRunIds(), contains(taskRun1.getId()));
     }
+
+
+    @Test
+    public void testTaskRUnUpStreamNotFound_ShouldCreate(){
+        // prepare
+        OffsetDateTime next = DateTimeUtils.now().plusSeconds(120);
+        List<Task> tasks = MockTaskFactory.createTasksWithRelations(2, operatorId, "0>>1");
+
+        Task task1 = tasks.get(0);
+        Task task2 = tasks.get(1).cloneBuilder()
+                .withScheduleConf(new ScheduleConf(ScheduleType.SCHEDULED, CRON_EVERY_MINUTE,TimeZoneEnum.UTC)).build();
+        taskDao.create(task1);
+        taskDao.create(task2);
+
+        DatabaseTaskGraph graph = injector.getInstance(DatabaseTaskGraph.class);
+        taskSpawner.schedule(graph);
+
+        ArgumentCaptor<List<TaskRun>> captor = ArgumentCaptor.forClass(List.class);
+
+        // process
+        Tick tick = new Tick(next);
+        eventBus.post(new TickEvent(tick));
+
+        // verify
+        await().atMost(10, TimeUnit.SECONDS).until(this::invoked);
+        verify(taskManager).submit(captor.capture());
+
+        List<TaskRun> result = captor.getValue();
+        assertThat(result.size(), is(1));
+
+        // task2
+        TaskRun submitted = result.get(0);
+        assertThat(submitted.getId(), is(notNullValue()));
+        assertThat(submitted.getTask().getId(), is(tasks.get(1).getId()));
+        assertThat(submitted.getScheduledTick(), is(tick));
+        assertThat(submitted.getStartAt(), is(nullValue()));
+        assertThat(submitted.getEndAt(), is(nullValue()));
+        assertThat(submitted.getStatus(), is(TaskRunStatus.UPSTREAM_NOT_FOUND));
+
+        assertThat(submitted.getDependentTaskRunIds(), hasSize(0));
+    }
+
+    @Test
+    public void testTaskRunUpstreamCrossDays_ShouldCreate(){
+        // prepare
+        DateTimeUtils.freezeAt("202001012000");
+        List<Task> tasks = MockTaskFactory.createTasksWithRelations(2, operatorId, "0>>1");
+
+        Task task1 = tasks.get(0);
+        Task task2 = tasks.get(1).cloneBuilder()
+                .withScheduleConf(new ScheduleConf(ScheduleType.SCHEDULED, CRON_EVERY_DAY,TimeZoneEnum.UTC)).build();
+        taskDao.create(task1);
+        taskDao.create(task2);
+        TaskRun taskRun1 = MockTaskRunFactory.createTaskRun(task1);
+        taskRunDao.createTaskRun(taskRun1);
+
+        //two days after
+        OffsetDateTime twoDaysAfter = DateTimeUtils.freezeAt("202001020101");
+        DatabaseTaskGraph graph = injector.getInstance(DatabaseTaskGraph.class);
+        taskSpawner.schedule(graph);
+
+        ArgumentCaptor<List<TaskRun>> captor = ArgumentCaptor.forClass(List.class);
+
+        // process
+        Tick tick = new Tick(twoDaysAfter);
+        eventBus.post(new TickEvent(tick));
+
+        // verify
+        await().atMost(10, TimeUnit.SECONDS).until(this::invoked);
+        verify(taskManager).submit(captor.capture());
+
+        List<TaskRun> result = captor.getValue();
+        assertThat(result.size(), is(1));
+    }
+
 
     private TaskRunEnv buildEnv(Long taskId, Map<String, Object> config) {
         TaskRunEnv.Builder builder = TaskRunEnv.newBuilder()

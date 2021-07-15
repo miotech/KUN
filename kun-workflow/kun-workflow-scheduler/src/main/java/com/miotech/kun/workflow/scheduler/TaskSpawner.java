@@ -152,10 +152,6 @@ public class TaskSpawner implements InitializingBean {
         List<TaskRun> results = new ArrayList<>(tasks.size());
         for (Task task : tasks) {
             List<TaskRun> upstreamTaskRun = resolveDependencies(task, tick, results);
-            if (task.getDependencies().size() > upstreamTaskRun.size()) {
-                logger.error("dependency not satisfy, taskId = {}", task.getId());
-                continue;
-            }
             try {
                 if (tick == SpecialTick.NULL) {
                     results.add(createTaskRun(task, tick, env.getConfig(task.getId()), upstreamTaskRun));
@@ -195,13 +191,17 @@ public class TaskSpawner implements InitializingBean {
                 .withQueueName(task.getQueueName())
                 .withPriority(task.getPriority())
                 .withDependentTaskRunIds(upstreamTaskRunIds)
-                .withStatus(resolveTaskRunUpstreamStatus(upstreamTaskRuns))
+                .withStatus(resolveTaskRunUpstreamStatus(task,upstreamTaskRuns))
                 .build();
         logger.debug("TaskRun is created successfully TaskRun={}, Task={}, Tick={}.", taskRun, task, tick);
         return taskRun;
     }
 
-    private TaskRunStatus resolveTaskRunUpstreamStatus(List<TaskRun> upstreamTaskRuns) {
+    private TaskRunStatus resolveTaskRunUpstreamStatus(Task task,List<TaskRun> upstreamTaskRuns) {
+        if (task.getDependencies().size() > upstreamTaskRuns.size()) {
+            logger.error("dependency not satisfy, taskId = {}", task.getId());
+            return TaskRunStatus.UPSTREAM_NOT_FOUND;
+        }
         for (TaskRun upstreamTaskRun : upstreamTaskRuns) {
             if (upstreamTaskRun.getStatus().isFailure()
                     || upstreamTaskRun.getStatus().equals(TaskRunStatus.UPSTREAM_FAILED)) {

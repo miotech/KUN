@@ -93,7 +93,7 @@ public class TaskManager {
             return false;
         }
         try {
-            TaskAttempt taskAttempt = createTaskAttempt(taskRun);
+            TaskAttempt taskAttempt = createTaskAttempt(taskRun, true);
             logger.info("save rerun taskAttempt, taskAttemptId = {}, attempt = {}", taskAttempt.getId(), taskAttempt.getAttempt());
             save(Arrays.asList(taskAttempt));
             updateDownStreamStatus(taskRun.getId(), TaskRunStatus.CREATED);
@@ -116,6 +116,10 @@ public class TaskManager {
     }
 
     private TaskAttempt createTaskAttempt(TaskRun taskRun) {
+        return createTaskAttempt(taskRun, false);
+    }
+
+    private TaskAttempt createTaskAttempt(TaskRun taskRun, boolean retry) {
         checkNotNull(taskRun, "taskRun should not be null.");
         checkNotNull(taskRun.getId(), "taskRun's id should not be null.");
 
@@ -123,13 +127,13 @@ public class TaskManager {
 
         int attempt = 1;
         if (savedTaskAttempt != null) {
-            attempt = savedTaskAttempt.getAttempt() + 1;
+            attempt = retry ? savedTaskAttempt.getAttempt() + 1 : savedTaskAttempt.getAttempt();
         }
         TaskAttempt taskAttempt = TaskAttempt.newBuilder()
                 .withId(WorkflowIdGenerator.nextTaskAttemptId(taskRun.getId(), attempt))
                 .withTaskRun(taskRun)
                 .withAttempt(attempt)
-                .withStatus(attempt == 1 ? taskRun.getStatus() : TaskRunStatus.CREATED)
+                .withStatus(retry ? TaskRunStatus.CREATED : taskRun.getStatus())
                 .withQueueName(taskRun.getQueueName())
                 .withPriority(taskRun.getPriority())
                 .build();

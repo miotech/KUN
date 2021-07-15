@@ -570,6 +570,32 @@ public class TaskManagerTest extends SchedulerTestBase {
         assertThat(created.getStatus(),is(TaskRunStatus.UPSTREAM_FAILED));
     }
 
+    @Test
+    public void testReSubmitTaskAttempt_AttemptTimesShouldInvariant(){
+        Task task = MockTaskFactory.createTask();
+        TaskRun taskRun = MockTaskRunFactory.createTaskRun(task);
+        ArgumentCaptor<TaskAttempt> captor = ArgumentCaptor.forClass(TaskAttempt.class);
+        taskDao.create(task);
+        taskRunDao.createTaskRun(taskRun);
+        taskManager.submit(Arrays.asList(taskRun));
+        // verify first submit
+        await().atMost(10, TimeUnit.SECONDS).until(this::invoked);
+        verify(executor).submit(captor.capture());
+        TaskAttempt taskAttempt = captor.getValue();
+        assertThat(taskAttempt.getStatus(),is(TaskRunStatus.CREATED));
+        assertThat(taskAttempt.getId(),is(taskRun.getId() + 1));
+        assertThat(taskAttempt.getAttempt(),is(1));
+
+        taskManager.submit(Arrays.asList(taskRun));
+        // verify resubmit
+        await().atMost(10, TimeUnit.SECONDS).until(this::invoked);
+        TaskAttempt reSubmitAttempt = captor.getValue();
+        assertThat(reSubmitAttempt.getStatus(),is(TaskRunStatus.CREATED));
+        assertThat(reSubmitAttempt.getId(),is(taskRun.getId() + 1));
+        assertThat(reSubmitAttempt.getAttempt(),is(1));
+    }
+
+
     private TaskAttemptStatusChangeEvent prepareEvent(long taskAttemptId, String taskName, long taskId, TaskRunStatus from, TaskRunStatus to) {
         return new TaskAttemptStatusChangeEvent(taskAttemptId, from, to, taskName, taskId);
     }
